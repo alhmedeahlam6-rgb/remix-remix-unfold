@@ -103,7 +103,7 @@ export function ThirdPersonPlayer({
     const box = new THREE.Box3().setFromObject(charScene);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const targetHeight = 0.6;
+    const targetHeight = 1.8;
     const s = size.y > 0 ? targetHeight / size.y : 1;
     // After scaling, min.y in local space becomes box.min.y * s.
     // Push the inner group up by that amount so feet land at y=0.
