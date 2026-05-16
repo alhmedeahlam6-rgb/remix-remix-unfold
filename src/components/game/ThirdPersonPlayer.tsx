@@ -226,17 +226,57 @@ export function ThirdPersonPlayer({
   // scene graph recursively every frame is the single biggest cost in this
   // component — caching a flat mesh list and refreshing it on a slow timer
   // gives a large smoothness win without breaking dynamic objects.
+  // All candidate meshes in the scene (full scan, slow refresh).
+  const allMeshes = useRef<THREE.Object3D[]>([]);
+  const lastFullScan = useRef(0);
+  // Subset within COLLIDE_RADIUS of the player (refreshed every ~0.25s).
+  // This is the list we actually raycast against — keeping it small is the
+  // biggest perf win in dense zones where the map model has lots of geometry.
   const collidableMeshes = useRef<THREE.Object3D[]>([]);
-  const lastMeshScan = useRef(0);
+  const lastNearScan = useRef(0);
+  const COLLIDE_RADIUS = 60; // meters around player
+  const COLLIDE_RADIUS_SQ = COLLIDE_RADIUS * COLLIDE_RADIUS;
+  const _meshCentre = new THREE.Vector3();
+  const _meshBox = new THREE.Box3();
   const refreshCollidables = (now: number) => {
-    if (now - lastMeshScan.current < 1.0 && collidableMeshes.current.length) return;
-    lastMeshScan.current = now;
-    const list: THREE.Object3D[] = [];
-    scene.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.isMesh && m.visible && !isDescendantOfChar(m)) list.push(m);
-    });
-    collidableMeshes.current = list;
+    // Full scene scan: rare, only to discover newly added/removed meshes.
+    if (now - lastFullScan.current > 2.0 || !allMeshes.current.length) {
+      lastFullScan.current = now;
+      const list: THREE.Object3D[] = [];
+      scene.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh && m.visible && !isDescendantOfChar(m)) list.push(m);
+      });
+      allMeshes.current = list;
+    }
+    // Near-player cull: fast, runs often. Picks meshes whose bounding box
+    // centre is within COLLIDE_RADIUS of the player on the XZ plane.
+    if (now - lastNearScan.current < 0.25 && collidableMeshes.current.length) return;
+    lastNearScan.current = now;
+    const px = pos.current.x;
+    const pz = pos.current.z;
+    const near: THREE.Object3D[] = [];
+    for (const m of allMeshes.current) {
+      const mesh = m as THREE.Mesh;
+      if (!mesh.visible) continue;
+      // Use bounding sphere if available; else compute world AABB centre.
+      const geom = mesh.geometry;
+      if (geom && geom.boundingSphere) {
+        _meshCentre.copy(geom.boundingSphere.center).applyMatrix4(mesh.matrixWorld);
+        const r = geom.boundingSphere.radius * Math.max(mesh.scale.x, mesh.scale.z);
+        const dx = _meshCentre.x - px;
+        const dz = _meshCentre.z - pz;
+        const reach = COLLIDE_RADIUS + r;
+        if (dx * dx + dz * dz <= reach * reach) near.push(mesh);
+      } else {
+        _meshBox.setFromObject(mesh);
+        _meshBox.getCenter(_meshCentre);
+        const dx = _meshCentre.x - px;
+        const dz = _meshCentre.z - pz;
+        if (dx * dx + dz * dz <= COLLIDE_RADIUS_SQ * 4) near.push(mesh);
+      }
+    }
+    collidableMeshes.current = near;
   };
 
   // Collide horizontally against ANY mesh in the scene (excluding the character itself).
