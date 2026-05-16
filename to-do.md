@@ -2,6 +2,190 @@
 
 Last updated: this session.
 
+---
+
+## 📖 Full project overview (rewritten this session)
+
+**Flair World** is a browser-based open-world multiplayer hangout game built
+on TanStack Start + React 19 + react-three-fiber + Three.js. Backend is
+Lovable Cloud (Supabase under the hood) for auth, profiles, and realtime
+presence. Everything ships as a single Vite-bundled web app — no native
+client, no Unity, no servers we own.
+
+### Tech stack
+- **Frontend framework**: TanStack Start v1 (SSR + file-based routing, route
+  files in `src/routes/`).
+- **Rendering**: `@react-three/fiber` (R3F) + `@react-three/drei` over
+  Three.js. Single `<Canvas>` in `src/components/game/Game.tsx`.
+- **Build/Bundler**: Vite 7. Target runtime: Cloudflare Workers (edge).
+- **Styling**: Tailwind CSS v4 via `src/styles.css` + shadcn/ui components in
+  `src/components/ui/`.
+- **Backend**: Lovable Cloud — `profiles` table + RLS + `handle_new_user`
+  trigger, Supabase Realtime for multiplayer presence, Supabase Auth for
+  username sign-up (synthetic `<username>@flairworld.game` email).
+
+### Asset pipeline
+- All world assets live under `public/` (map, houses, stores, vehicles,
+  character `.fbx`, Mixamo animation `.fbx` clips). `src/lib/assets.ts`
+  exposes them under the `A` namespace and the `MOVES` / `DANCES` maps.
+- Loaders in `src/components/game/useAnyModel.ts` route by file format
+  (FBX vs GLB) using an explicit `formatUrl` (because the preloader caches
+  via `blob:` URLs which have no extension).
+- `KTX2Loader` + Draco + Meshopt decoders are all wired (transcoder served
+  from `public/basis/`).
+- `full_map.glb` is Draco + KTX2/Basis ETC1S compressed (~26 MB).
+- `src/components/game/SplashScreen.tsx` preloads all assets into the
+  browser Cache Storage as blobs, then hands a `CachedAssetMap` to the game.
+
+### World layout
+- `src/lib/worldLayout.ts` is the single source of truth for the procedural
+  village layout — 8 villages on a ring of radius 1800, 6 houses each,
+  named (Eastwind, Northgate, Highmoor, Westvale, Sunset Hollow,
+  Southreach, Lowmarsh, Dawnhill).
+- `src/components/game/World.tsx` renders the map, all buildings, the
+  hovercar, remote players, and the local `ThirdPersonPlayer`.
+- AABB collision boxes are derived per building and passed to the player as
+  hard obstacles in addition to mesh-level raycasts.
+
+### Player + animation (`ThirdPersonPlayer.tsx`)
+- Character is a Mixamo FBX rig, cloned via `SkeletonUtils.clone` (regular
+  Object3D clone breaks skin binding → T-pose bug).
+- Auto-fit to `targetHeight = 1.8` (3× the previous 0.6).
+- Animation clips: idle / walk / run / jump + 10 dances (digit keys + F/X).
+  Mixer `timeScale = 1.3` so limbs cycle 30 % faster than authored without
+  affecting movement speed.
+- Movement: WASD + Shift run + Space jump. Speeds `WALK_SPEED = 7.6`,
+  `RUN_SPEED = 16.5`.
+- Camera: spherical orbit around the player's head, pitch-clamped to
+  `-0.45 … 0.7`, raycast pull-in when blocked.
+- Foot snap: every frame samples the lowest foot bone in world space and
+  lerps an inner-group Y offset so feet stay planted while the hip-bobbing
+  idle/dance clips play.
+- Collision system (current — see "this session" below for the latest
+  throttle work):
+  - **AABB pass** against building boxes.
+  - **Forward raycast** at 3 sample heights (`0.15 / 0.9 / 1.7`) against a
+    near-player cached mesh list.
+  - **Ground raycast** straight down each frame, ceiling-capped at
+    `head + 1.6` so we never warp onto roofs.
+  - **Camera raycast** from head → desired cam pos, throttled.
+  - **Near-mesh cull**: full scene scan every ~3 s discovers meshes; cull
+    pass picks only meshes within `COLLIDE_RADIUS = 28 m` of the player on
+    the XZ plane, re-running on an adaptive interval (0.25–0.7 s based on
+    FPS) OR when the player has moved >6 m since the last cull.
+
+### Vehicle (`Vehicle.tsx` + `driveState.ts`)
+- One floating hovercar spawns near the player at `(6, 0.3, 190)`.
+- Walk within ~7 m and press **E** to mount. WASD drives (A/D turn,
+  W/S throttle with stronger brake on opposite input). `ACCEL = 56`,
+  `MAX_SPEED = 110`, reverse capped at 35. Turn rate scales down with
+  speed, body banks/pitches into turns, chase-cam lags with FOV boost up to
+  +22° at top speed, subtle hover lift at speed.
+- On dismount, FOV restores.
+
+### Multiplayer (`presence.ts` + `RemotePlayers.tsx`)
+- Supabase Realtime channel; each client broadcasts `{x, y, z, yaw, name}`.
+- Remote players render as glowing cyan capsules with floating usernames
+  (no animation streaming yet — capsule placeholder).
+- Phone "Friends" tab lists currently online travelers; remote players also
+  show as dots on the GPS minimap.
+
+### HUD / UI
+- `SplashScreen` → `UsernameGate` → `Game`.
+- `SplashScreen.tsx`: starfield, glowing progress bar, rotating tips,
+  "Enter World →" gate. Loads all GLB/FBX assets as blob URLs.
+- `UsernameGate.tsx`: NPC-style "Gate Guard" sign-up with live availability
+  check, writes to `profiles` table.
+- `PhoneHUD.tsx`: virtual phone with `CoordHUD` (live x/y/z + nearest
+  place), Friends tab (online list), My Car tab (UI stub), GPS minimap.
+- `SceneLoader.tsx`: DOM overlay using drei `useProgress()` to show
+  "Parsing models (X/Y)" while three.js decodes the first frame.
+- `RayDebug.tsx` + `src/lib/rayDebug.ts`: press **B** to toggle visualised
+  ground/wall/camera rays for debugging.
+
+### Routing
+- `src/routes/__root.tsx` — root layout.
+- `src/routes/index.tsx` — mounts `<Game />`.
+- `src/routeTree.gen.ts` is auto-generated by the TanStack Router Vite
+  plugin (do NOT hand-edit).
+
+### Performance settings (current)
+- `Game.tsx` Canvas: `dpr={[0.75, 1.5]}`, no antialias, no stencil,
+  `high-performance` GPU, camera `far=4000`.
+- `<PerformanceMonitor>` + `<AdaptiveDpr pixelated />` + `<AdaptiveEvents />`
+  from drei — DPR scales down on FPS < 40, recovers on > 60.
+- `World.tsx`: fog `800 → 3500`.
+- `Model.tsx`: `isStatic` default `true` → freezes local matrices on every
+  static mesh (the parked car / map / buildings) so three.js doesn't
+  recompute hundreds of matrices per frame.
+- Collision cull radius 28 m, adaptive near-scan, throttled camera ray
+  (see this session below).
+
+### Known limitations
+- Three.js warns about `KHR_materials_pbrSpecularGlossiness` on a couple of
+  imported GLBs (cosmetic; needs a one-off re-export with metallic-roughness).
+- Remote players still use a placeholder capsule mesh — no
+  walk/dance/jump animation streamed yet.
+- In-game chat is not wired (Friends tab "Chat" still disabled).
+- "Bring my car" phone app is a UI stub.
+- Email field for auth is synthetic.
+
+### Roadmap (next up)
+- Re-export `pbrSpecularGlossiness` models.
+- Stream animation state through presence so remote capsules can play
+  idle/walk/dance.
+- Real-time chat (Supabase broadcast).
+- "Bring my car" actually spawning + driving a car to the player.
+- Friends system (mutual follow).
+- Persistent inventory / progression per profile.
+- Day/night cycle, ambient audio, real skybox / HDRI, better shadows.
+- LOD or frustum-distance culling on village houses; further texture
+  compression on house/store GLBs.
+
+---
+
+## ✅ This session
+
+**Goal**: cut CPU spikes from collision raycasts in dense zones.
+
+### Done
+- **Adaptive collision-cache refresh** in `ThirdPersonPlayer.tsx`:
+  - Tracks `dtEMA` (exponentially smoothed frame time) every frame.
+  - Near-player cull interval is now adaptive based on derived FPS:
+    `0.25 s @ 60+ fps → 0.4 s @ 35–55 fps → 0.7 s @ <35 fps`.
+    When the GPU is already struggling, the cull stops adding to the spike.
+  - Also re-culls early if the player has moved more than 6 m since the
+    last cull, so the near-list never goes stale during fast running.
+  - Full scene scan rate relaxed from 2 s → 3 s.
+- **Throttled camera collision raycast**:
+  - The camera-pull-in raycast (was running every frame against the cached
+    mesh list) now runs **every 3rd frame**. The hit distance is cached in
+    `camHitDistCache` and reused on the off-frames, so the camera still
+    visually pulls in instantly — we're just not re-paying for the raycast.
+  - Camera ground-clearance raycast now runs **every 2nd frame**.
+- **Frame counter + cached cam-hit ref** added (`frameCount`,
+  `camHitDistCache`, `lastCamRayT`) to support the above.
+- **Build-overview prepended to `to-do.md`** (this section) — old session
+  notes preserved verbatim below.
+
+### Net effect
+- Per-frame raycast budget in dense zones drops by roughly:
+  - Camera ray: ~66 % fewer casts (1 of every 3 frames).
+  - Camera-ground ray: ~50 % fewer casts.
+  - Near-cull traversal: same rate at high FPS, but ~3× less work at low FPS
+    (which is exactly when it was hurting most).
+- Forward/ground raycasts for movement still run every frame — they have
+  to, or the character would tunnel through walls / pop off the ground.
+
+### Not addressed (next perf candidates)
+- Merge identical building meshes via `InstancedMesh`.
+- Lower-poly LOD swap for distant village houses.
+- Re-export `full_map.glb` at a lower texture res.
+
+---
+
+
+
 ## ✅ Latest fixes (this turn)
 
 - **Character speed 3× slower**: `WALK_SPEED` 12→4, `RUN_SPEED` 26→8.7 in
