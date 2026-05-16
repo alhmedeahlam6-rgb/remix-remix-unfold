@@ -494,22 +494,30 @@ export function ThirdPersonPlayer({
       pos.current.z + Math.cos(yaw) * horizDist,
     );
 
-    // Camera collision: raycast from player head toward desired cam pos; if blocked, pull in.
+    // Camera collision: raycast from player head toward desired cam pos.
+    // Throttled — re-evaluate every 3rd frame (or every frame if low FPS would
+    // make stutters more visible). Cached distance is reused between casts.
     const camDir = new THREE.Vector3().subVectors(desired, lookAt);
     const camDist = camDir.length();
     camDir.normalize();
-    camRay.set(lookAt, camDir);
-    camRay.far = camDist;
-    const camHits = camRay.intersectObjects(collidableMeshes.current, false);
     let finalDist = camDist;
-    if (camHits.length > 0) {
-      finalDist = Math.max(CAM_MIN_DIST, camHits[0].distance - 0.15);
+    if (frameCount.current % 3 === 0) {
+      camRay.set(lookAt, camDir);
+      camRay.far = camDist;
+      const camHits = camRay.intersectObjects(collidableMeshes.current, false);
+      camHitDistCache.current = camHits.length > 0 ? camHits[0].distance - 0.15 : null;
+      lastCamRayT.current = performance.now();
+    }
+    if (camHitDistCache.current !== null) {
+      finalDist = Math.max(CAM_MIN_DIST, Math.min(camDist, camHitDistCache.current));
     }
     const finalPos = lookAt.clone().add(camDir.clone().multiplyScalar(finalDist));
-    // Also keep ground clearance — pull camera up so it never clips the floor.
-    const camGround = groundAt(finalPos.x, finalPos.z, -Infinity, false);
-    if (camGround !== -Infinity && finalPos.y < camGround + 0.4) {
-      finalPos.y = camGround + 0.4;
+    // Ground clearance for the camera — only re-sample every 2nd frame.
+    if (frameCount.current % 2 === 0) {
+      const camGround = groundAt(finalPos.x, finalPos.z, -Infinity, false);
+      if (camGround !== -Infinity && finalPos.y < camGround + 0.4) {
+        finalPos.y = camGround + 0.4;
+      }
     }
     if (rayDebug.enabled) {
       rayDebug.camera = {
