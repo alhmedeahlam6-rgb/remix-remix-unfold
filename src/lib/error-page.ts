@@ -1,0 +1,3 @@
+export function renderErrorPage(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Something went wrong</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fafafa;color:#111}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.5rem;margin:0 0 .5rem}p{color:#555;margin:0 0 1.5rem}a{display:inline-block;padding:.5rem 1rem;background:#111;color:#fff;text-decoration:none;border-radius:.375rem}</style></head><body><main><h1>Something went wrong</h1><p>An unexpected error occurred. Please try again.</p><a href="/">Go home</a></main></body></html>`;
+}
