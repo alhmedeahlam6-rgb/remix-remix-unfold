@@ -234,7 +234,7 @@ export function ThirdPersonPlayer({
   // biggest perf win in dense zones where the map model has lots of geometry.
   const collidableMeshes = useRef<THREE.Object3D[]>([]);
   const lastNearScan = useRef(0);
-  const COLLIDE_RADIUS = 60; // meters around player
+  const COLLIDE_RADIUS = 28; // meters around player — tight cull for dense zones
   const COLLIDE_RADIUS_SQ = COLLIDE_RADIUS * COLLIDE_RADIUS;
   const _meshCentre = new THREE.Vector3();
   const _meshBox = new THREE.Box3();
