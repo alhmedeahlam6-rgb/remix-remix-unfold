@@ -16,10 +16,14 @@ const RADIUS = 0.65;
 // +90% movement speed.
 const WALK_SPEED = 7.6;
 const RUN_SPEED = 16.5;
+// Animation playback multiplier — clips play 30% faster than authored
+// (does NOT change movement speed, only how fast the limbs cycle).
+const ANIM_TIME_SCALE = 1.3;
 // Heights (relative to feet) where we sample forward collision rays.
-// Multiple heights stop the character slipping through tall thin geometry
-// (railings, lamp posts, building edges that don't intersect a single ray).
-const COLLISION_HEIGHTS = [0.05, 0.25, 0.5, 0.75, 1.0, 1.3];
+// Reduced from 6 to 3 sample heights — biggest per-frame raycast cost in
+// this component. Still covers low/mid/high so we don't slip past lamp posts
+// or railings, but ~half the work each frame.
+const COLLISION_HEIGHTS = [0.15, 0.9, 1.7];
 const GRAVITY = 26;
 const JUMP_V = 11;
 // Camera pulled back ~25%.
@@ -99,7 +103,7 @@ export function ThirdPersonPlayer({
     const box = new THREE.Box3().setFromObject(charScene);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const targetHeight = 0.6;
+    const targetHeight = 1.8;
     const s = size.y > 0 ? targetHeight / size.y : 1;
     // After scaling, min.y in local space becomes box.min.y * s.
     // Push the inner group up by that amount so feet land at y=0.
@@ -118,7 +122,12 @@ export function ThirdPersonPlayer({
   const jumpClip = useFirstClip(asset(MOVES.jump), MOVES.jump);
   const danceClips = DANCES.map((d) => useFirstClip(asset(d), d));
 
-  const mixer = useMemo(() => new THREE.AnimationMixer(charScene), [charScene]);
+  const mixer = useMemo(() => {
+    const m = new THREE.AnimationMixer(charScene);
+    // Make every clip play faster without affecting movement speed.
+    m.timeScale = ANIM_TIME_SCALE;
+    return m;
+  }, [charScene]);
   const actions = useMemo(() => {
     const make = (clip: THREE.AnimationClip | undefined) => (clip ? mixer.clipAction(clip) : null);
     return {
