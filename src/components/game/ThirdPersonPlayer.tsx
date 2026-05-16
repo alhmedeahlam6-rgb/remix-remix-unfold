@@ -353,8 +353,16 @@ export function ThirdPersonPlayer({
     return y;
   };
 
+  // Cache last camera collision hit so we don't raycast the cam every frame.
+  const camHitDistCache = useRef<number | null>(null);
+  const lastCamRayT = useRef(0);
+  const frameCount = useRef(0);
+
   useFrame((_, dtRaw) => {
     const dt = Math.min(dtRaw, 0.05);
+    // EMA of frame time, drives adaptive collision throttle.
+    dtEMA.current = dtEMA.current * 0.9 + dt * 0.1;
+    frameCount.current++;
     mixer.update(dt);
     refreshCollidables(performance.now() / 1000);
 
