@@ -523,7 +523,7 @@ export function ThirdPersonPlayer({
       rayDebug.camera = {
         origin: lookAt.clone(),
         end: finalPos.clone(),
-        hit: camHits.length > 0,
+        hit: camHitDistCache.current !== null,
       };
     }
     camera.position.copy(finalPos);
