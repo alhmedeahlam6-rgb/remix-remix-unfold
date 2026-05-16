@@ -229,18 +229,24 @@ export function ThirdPersonPlayer({
   // All candidate meshes in the scene (full scan, slow refresh).
   const allMeshes = useRef<THREE.Object3D[]>([]);
   const lastFullScan = useRef(0);
-  // Subset within COLLIDE_RADIUS of the player (refreshed every ~0.25s).
-  // This is the list we actually raycast against — keeping it small is the
-  // biggest perf win in dense zones where the map model has lots of geometry.
+  // Subset within COLLIDE_RADIUS of the player. We raycast only against this.
   const collidableMeshes = useRef<THREE.Object3D[]>([]);
   const lastNearScan = useRef(0);
-  const COLLIDE_RADIUS = 28; // meters around player — tight cull for dense zones
+  const lastNearPos = useRef(new THREE.Vector3(Infinity, 0, Infinity));
+  const COLLIDE_RADIUS = 28;
   const COLLIDE_RADIUS_SQ = COLLIDE_RADIUS * COLLIDE_RADIUS;
+  // Re-cull only after the player drifts this far from the last cull centre.
+  // Combined with the 28m radius, this guarantees nothing pops in mid-walk.
+  const NEAR_REPULL_DIST_SQ = 6 * 6;
   const _meshCentre = new THREE.Vector3();
   const _meshBox = new THREE.Box3();
+  // Adaptive throttle: when frames are cheap, refresh near-scan often
+  // (~4/s). When frames are expensive (low FPS), back off to ~1.5/s so the
+  // scan itself isn't making things worse. dtEMA is updated each frame.
+  const dtEMA = useRef(1 / 60);
   const refreshCollidables = (now: number) => {
-    // Full scene scan: rare, only to discover newly added/removed meshes.
-    if (now - lastFullScan.current > 2.0 || !allMeshes.current.length) {
+    // Full scene scan: rare (every ~3s) — only to discover added/removed meshes.
+    if (now - lastFullScan.current > 3.0 || !allMeshes.current.length) {
       lastFullScan.current = now;
       const list: THREE.Object3D[] = [];
       scene.traverse((o) => {
@@ -249,31 +255,39 @@ export function ThirdPersonPlayer({
       });
       allMeshes.current = list;
     }
-    // Near-player cull: fast, runs often. Picks meshes whose bounding box
-    // centre is within COLLIDE_RADIUS of the player on the XZ plane.
-    if (now - lastNearScan.current < 0.25 && collidableMeshes.current.length) return;
+    // Adaptive interval: 0.25s at 60+fps, up to 0.7s when struggling (<30fps).
+    const fps = 1 / Math.max(dtEMA.current, 1e-3);
+    const interval = fps > 55 ? 0.25 : fps > 35 ? 0.4 : 0.7;
+    const dx = pos.current.x - lastNearPos.current.x;
+    const dz = pos.current.z - lastNearPos.current.z;
+    const movedFar = dx * dx + dz * dz > NEAR_REPULL_DIST_SQ;
+    if (
+      collidableMeshes.current.length &&
+      !movedFar &&
+      now - lastNearScan.current < interval
+    ) return;
     lastNearScan.current = now;
+    lastNearPos.current.set(pos.current.x, 0, pos.current.z);
     const px = pos.current.x;
     const pz = pos.current.z;
     const near: THREE.Object3D[] = [];
     for (const m of allMeshes.current) {
       const mesh = m as THREE.Mesh;
       if (!mesh.visible) continue;
-      // Use bounding sphere if available; else compute world AABB centre.
       const geom = mesh.geometry;
       if (geom && geom.boundingSphere) {
         _meshCentre.copy(geom.boundingSphere.center).applyMatrix4(mesh.matrixWorld);
         const r = geom.boundingSphere.radius * Math.max(mesh.scale.x, mesh.scale.z);
-        const dx = _meshCentre.x - px;
-        const dz = _meshCentre.z - pz;
+        const ddx = _meshCentre.x - px;
+        const ddz = _meshCentre.z - pz;
         const reach = COLLIDE_RADIUS + r;
-        if (dx * dx + dz * dz <= reach * reach) near.push(mesh);
+        if (ddx * ddx + ddz * ddz <= reach * reach) near.push(mesh);
       } else {
         _meshBox.setFromObject(mesh);
         _meshBox.getCenter(_meshCentre);
-        const dx = _meshCentre.x - px;
-        const dz = _meshCentre.z - pz;
-        if (dx * dx + dz * dz <= COLLIDE_RADIUS_SQ * 4) near.push(mesh);
+        const ddx = _meshCentre.x - px;
+        const ddz = _meshCentre.z - pz;
+        if (ddx * ddx + ddz * ddz <= COLLIDE_RADIUS_SQ * 4) near.push(mesh);
       }
     }
     collidableMeshes.current = near;
@@ -339,8 +353,16 @@ export function ThirdPersonPlayer({
     return y;
   };
 
+  // Cache last camera collision hit so we don't raycast the cam every frame.
+  const camHitDistCache = useRef<number | null>(null);
+  const lastCamRayT = useRef(0);
+  const frameCount = useRef(0);
+
   useFrame((_, dtRaw) => {
     const dt = Math.min(dtRaw, 0.05);
+    // EMA of frame time, drives adaptive collision throttle.
+    dtEMA.current = dtEMA.current * 0.9 + dt * 0.1;
+    frameCount.current++;
     mixer.update(dt);
     refreshCollidables(performance.now() / 1000);
 
@@ -472,28 +494,36 @@ export function ThirdPersonPlayer({
       pos.current.z + Math.cos(yaw) * horizDist,
     );
 
-    // Camera collision: raycast from player head toward desired cam pos; if blocked, pull in.
+    // Camera collision: raycast from player head toward desired cam pos.
+    // Throttled — re-evaluate every 3rd frame (or every frame if low FPS would
+    // make stutters more visible). Cached distance is reused between casts.
     const camDir = new THREE.Vector3().subVectors(desired, lookAt);
     const camDist = camDir.length();
     camDir.normalize();
-    camRay.set(lookAt, camDir);
-    camRay.far = camDist;
-    const camHits = camRay.intersectObjects(collidableMeshes.current, false);
     let finalDist = camDist;
-    if (camHits.length > 0) {
-      finalDist = Math.max(CAM_MIN_DIST, camHits[0].distance - 0.15);
+    if (frameCount.current % 3 === 0) {
+      camRay.set(lookAt, camDir);
+      camRay.far = camDist;
+      const camHits = camRay.intersectObjects(collidableMeshes.current, false);
+      camHitDistCache.current = camHits.length > 0 ? camHits[0].distance - 0.15 : null;
+      lastCamRayT.current = performance.now();
+    }
+    if (camHitDistCache.current !== null) {
+      finalDist = Math.max(CAM_MIN_DIST, Math.min(camDist, camHitDistCache.current));
     }
     const finalPos = lookAt.clone().add(camDir.clone().multiplyScalar(finalDist));
-    // Also keep ground clearance — pull camera up so it never clips the floor.
-    const camGround = groundAt(finalPos.x, finalPos.z, -Infinity, false);
-    if (camGround !== -Infinity && finalPos.y < camGround + 0.4) {
-      finalPos.y = camGround + 0.4;
+    // Ground clearance for the camera — only re-sample every 2nd frame.
+    if (frameCount.current % 2 === 0) {
+      const camGround = groundAt(finalPos.x, finalPos.z, -Infinity, false);
+      if (camGround !== -Infinity && finalPos.y < camGround + 0.4) {
+        finalPos.y = camGround + 0.4;
+      }
     }
     if (rayDebug.enabled) {
       rayDebug.camera = {
         origin: lookAt.clone(),
         end: finalPos.clone(),
-        hit: camHits.length > 0,
+        hit: camHitDistCache.current !== null,
       };
     }
     camera.position.copy(finalPos);
