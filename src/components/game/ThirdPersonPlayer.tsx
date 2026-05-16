@@ -122,7 +122,12 @@ export function ThirdPersonPlayer({
   const jumpClip = useFirstClip(asset(MOVES.jump), MOVES.jump);
   const danceClips = DANCES.map((d) => useFirstClip(asset(d), d));
 
-  const mixer = useMemo(() => new THREE.AnimationMixer(charScene), [charScene]);
+  const mixer = useMemo(() => {
+    const m = new THREE.AnimationMixer(charScene);
+    // Make every clip play faster without affecting movement speed.
+    m.timeScale = ANIM_TIME_SCALE;
+    return m;
+  }, [charScene]);
   const actions = useMemo(() => {
     const make = (clip: THREE.AnimationClip | undefined) => (clip ? mixer.clipAction(clip) : null);
     return {
