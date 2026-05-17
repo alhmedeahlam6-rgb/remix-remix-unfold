@@ -302,6 +302,14 @@ export function ThirdPersonPlayer({
       }
     }
     collidableMeshes.current = near;
+    // Slim list for forward + camera rays: drop massive meshes (the map).
+    forwardMeshes.current = near.filter((m) => {
+      const mesh = m as THREE.Mesh;
+      const g = mesh.geometry;
+      if (!g || !g.boundingSphere) return true;
+      const r = g.boundingSphere.radius * Math.max(mesh.scale.x, mesh.scale.z);
+      return r <= FORWARD_MAX_MESH_RADIUS;
+    });
   };
 
   // Collide horizontally against ANY mesh in the scene (excluding the character itself).
