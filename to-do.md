@@ -513,3 +513,62 @@ Not touched yet (next candidates if still laggy):
 - Re-export `full_map.glb` with KTX2 + Draco at lower texture res
   (current GLB is 26MB).
 - Merge identical building meshes via `InstancedMesh`.
+
+---
+
+## ✅ This session — dense-zone perf round 2
+
+User request: cut the lag spikes in dense village zones without rewriting
+the whole engine. Picked the practical wins from a 15-item ideas list
+(BVH, offscreen worker, Wasm AABB, lightmap baking, etc. are big
+architectural changes left for later sessions).
+
+### Done
+- **Collision cull radius shrunk 28 m → 12 m** in `ThirdPersonPlayer.tsx`.
+  Player tops out at ~16.5 m/s, so 12 m still gives ~0.7 s of lookahead.
+  Dense villages now intersect a small fraction of the meshes they used to.
+- **Split mesh lists for raycasts**:
+  - `collidableMeshes` (unchanged) — used by the GROUND raycast, must
+    include the big terrain mesh.
+  - `forwardMeshes` (new) — same near-list filtered to drop any mesh whose
+    bounding sphere radius > 25 m. The giant `full_map.glb` mesh no longer
+    participates in forward/camera raycasts (it's terrain, not a wall;
+    actual building walls are already covered by the per-building AABB
+    pass in `collides()` + smaller sub-meshes). Forward + camera rays
+    both now point at `forwardMeshes`.
+- **Canvas clamp tightened** in `Game.tsx`:
+  - `dpr={[0.75, 1.5]}` → `dpr={[0.5, 1.0]}` (Intel HD 620 was being asked
+    to render at native scale; the `AdaptiveDpr` + `PerformanceMonitor`
+    pair still scales within the new clamp).
+  - Camera `far` 4000 → 1200, so the GPU stops processing vertices for
+    villages on the opposite side of the 1800-radius ring.
+- **Fog tightened** `800 → 3500` ⇒ `400 → 1100` in `World.tsx`, matching
+  the new far plane so the cull edge is hidden by atmosphere.
+
+### Net effect (expected)
+- Forward + camera raycasts in dense zones now intersect ~5–15 meshes
+  instead of 50+, and skip the multi-thousand-triangle terrain mesh.
+- GPU fragment + vertex load drops sharply once you're more than ~1100 m
+  from a village — those villages are no longer drawn.
+
+### Not addressed (next perf candidates — from user's idea list)
+- **InstancedMesh / BatchedMesh** for repeated village houses (single
+  biggest remaining draw-call win).
+- **LOD swap** (`<Detailed>` from drei or glTF-Transform discrete LODs).
+- **three-mesh-bvh** to make the remaining raycasts O(log n) per mesh.
+- **Texture atlas / ETC1S compression** on the per-building GLBs.
+- **Lightmap bake + strip dynamic lights / shadows**.
+- **Offscreen canvas via `@react-three/offscreen`**.
+- **Object pool for Vector3/Quaternion** inside `useFrame` (the player
+  loop still allocates a handful of vectors per frame).
+- **GPU skinning via VTF** for the Mixamo rig.
+- **Octree spatial partition** to replace the linear near-cull scan.
+- **Z-prepass** + `NearestFilter` on textures.
+- **`scene.matrixWorldAutoUpdate = false`** with manual updates on movers.
+- **Wasm AABB module** (or swap in Rapier) for collision math.
+
+### Files changed this turn
+- `src/components/game/ThirdPersonPlayer.tsx` — cull radius 28→12, new
+  `forwardMeshes` slim list, forward+camera rays use the slim list.
+- `src/components/game/Game.tsx` — dpr clamp + far plane.
+- `src/components/game/World.tsx` — fog distances.
