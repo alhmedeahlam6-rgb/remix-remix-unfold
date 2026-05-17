@@ -230,11 +230,22 @@ export function ThirdPersonPlayer({
   const allMeshes = useRef<THREE.Object3D[]>([]);
   const lastFullScan = useRef(0);
   // Subset within COLLIDE_RADIUS of the player. We raycast only against this.
+  // `collidableMeshes` is used for GROUND sampling (needs the big terrain
+  // mesh). `forwardMeshes` is the slim list used by forward+camera raycasts
+  // — excludes any mesh with a bounding sphere larger than
+  // FORWARD_MAX_MESH_RADIUS so we don't waste CPU intersecting the giant
+  // map mesh with every forward / camera ray. Walls of buildings are still
+  // covered by the per-building AABB obstacle pass in `collides()`.
   const collidableMeshes = useRef<THREE.Object3D[]>([]);
+  const forwardMeshes = useRef<THREE.Object3D[]>([]);
   const lastNearScan = useRef(0);
   const lastNearPos = useRef(new THREE.Vector3(Infinity, 0, Infinity));
-  const COLLIDE_RADIUS = 28;
+  // Player moves at ~16.5 m/s max; 12 m gives ~0.7 s lookahead which is
+  // plenty for forward-collision rays and dramatically reduces the per-frame
+  // intersection cost inside dense village zones.
+  const COLLIDE_RADIUS = 12;
   const COLLIDE_RADIUS_SQ = COLLIDE_RADIUS * COLLIDE_RADIUS;
+  const FORWARD_MAX_MESH_RADIUS = 25;
   // Re-cull only after the player drifts this far from the last cull centre.
   // Combined with the 28m radius, this guarantees nothing pops in mid-walk.
   const NEAR_REPULL_DIST_SQ = 6 * 6;
@@ -291,6 +302,14 @@ export function ThirdPersonPlayer({
       }
     }
     collidableMeshes.current = near;
+    // Slim list for forward + camera rays: drop massive meshes (the map).
+    forwardMeshes.current = near.filter((m) => {
+      const mesh = m as THREE.Mesh;
+      const g = mesh.geometry;
+      if (!g || !g.boundingSphere) return true;
+      const r = g.boundingSphere.radius * Math.max(mesh.scale.x, mesh.scale.z);
+      return r <= FORWARD_MAX_MESH_RADIUS;
+    });
   };
 
   // Collide horizontally against ANY mesh in the scene (excluding the character itself).
@@ -307,7 +326,7 @@ export function ThirdPersonPlayer({
       lastOrigin = origin;
       fwdRay.set(origin, dir);
       fwdRay.far = dist + RADIUS;
-      const hits = fwdRay.intersectObjects(collidableMeshes.current, false);
+      const hits = fwdRay.intersectObjects(forwardMeshes.current, false);
       if (hits.length > 0) hit = true;
       if (hit) break;
     }
@@ -504,7 +523,7 @@ export function ThirdPersonPlayer({
     if (frameCount.current % 3 === 0) {
       camRay.set(lookAt, camDir);
       camRay.far = camDist;
-      const camHits = camRay.intersectObjects(collidableMeshes.current, false);
+      const camHits = camRay.intersectObjects(forwardMeshes.current, false);
       camHitDistCache.current = camHits.length > 0 ? camHits[0].distance - 0.15 : null;
       lastCamRayT.current = performance.now();
     }

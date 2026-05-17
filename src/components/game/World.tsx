@@ -30,7 +30,7 @@ export function World({ assetMap, username }: { assetMap: CachedAssetMap; userna
       <hemisphereLight args={["#ffffff", "#b0b8c0", 1.6]} />
       <directionalLight position={[250, 360, 140]} intensity={2.8} />
       <directionalLight position={[-200, 300, -180]} intensity={1.2} />
-      <fog attach="fog" args={["#dfe7ec", 800, 3500]} />
+      <fog attach="fog" args={["#dfe7ec", 400, 1100]} />
 
       {/* Map scaled down 2.5× (was 0.8) so the village ring feels denser. */}
       <Model url={asset(A.map)} position={[0, 0, 0]} scale={0.16} />

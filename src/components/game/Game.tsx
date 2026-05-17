@@ -51,8 +51,8 @@ export function Game() {
   return (
     <div className="fixed inset-0 bg-background">
       <Canvas
-        dpr={[0.75, 1.5]}
-        camera={{ fov: 70, near: 0.1, far: 4000, position: [0, 7, 220] }}
+        dpr={[0.5, 1.0]}
+        camera={{ fov: 70, near: 0.1, far: 1200, position: [0, 7, 220] }}
         gl={{
           antialias: false,
           powerPreference: "high-performance",
