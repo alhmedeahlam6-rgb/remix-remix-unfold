@@ -326,7 +326,7 @@ export function ThirdPersonPlayer({
       lastOrigin = origin;
       fwdRay.set(origin, dir);
       fwdRay.far = dist + RADIUS;
-      const hits = fwdRay.intersectObjects(collidableMeshes.current, false);
+      const hits = fwdRay.intersectObjects(forwardMeshes.current, false);
       if (hits.length > 0) hit = true;
       if (hit) break;
     }
@@ -523,7 +523,7 @@ export function ThirdPersonPlayer({
     if (frameCount.current % 3 === 0) {
       camRay.set(lookAt, camDir);
       camRay.far = camDist;
-      const camHits = camRay.intersectObjects(collidableMeshes.current, false);
+      const camHits = camRay.intersectObjects(forwardMeshes.current, false);
       camHitDistCache.current = camHits.length > 0 ? camHits[0].distance - 0.15 : null;
       lastCamRayT.current = performance.now();
     }
