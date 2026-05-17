@@ -230,11 +230,22 @@ export function ThirdPersonPlayer({
   const allMeshes = useRef<THREE.Object3D[]>([]);
   const lastFullScan = useRef(0);
   // Subset within COLLIDE_RADIUS of the player. We raycast only against this.
+  // `collidableMeshes` is used for GROUND sampling (needs the big terrain
+  // mesh). `forwardMeshes` is the slim list used by forward+camera raycasts
+  // — excludes any mesh with a bounding sphere larger than
+  // FORWARD_MAX_MESH_RADIUS so we don't waste CPU intersecting the giant
+  // map mesh with every forward / camera ray. Walls of buildings are still
+  // covered by the per-building AABB obstacle pass in `collides()`.
   const collidableMeshes = useRef<THREE.Object3D[]>([]);
+  const forwardMeshes = useRef<THREE.Object3D[]>([]);
   const lastNearScan = useRef(0);
   const lastNearPos = useRef(new THREE.Vector3(Infinity, 0, Infinity));
-  const COLLIDE_RADIUS = 28;
+  // Player moves at ~16.5 m/s max; 12 m gives ~0.7 s lookahead which is
+  // plenty for forward-collision rays and dramatically reduces the per-frame
+  // intersection cost inside dense village zones.
+  const COLLIDE_RADIUS = 12;
   const COLLIDE_RADIUS_SQ = COLLIDE_RADIUS * COLLIDE_RADIUS;
+  const FORWARD_MAX_MESH_RADIUS = 25;
   // Re-cull only after the player drifts this far from the last cull centre.
   // Combined with the 28m radius, this guarantees nothing pops in mid-walk.
   const NEAR_REPULL_DIST_SQ = 6 * 6;
